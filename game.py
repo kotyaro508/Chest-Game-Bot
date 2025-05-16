@@ -11,7 +11,7 @@ from telebot import types
 
 from game_attributes import user_dict, room_dict
 from game_attributes import nominal_to_name, count_to_name, count_to_suits, suit_to_name, suit_to_endname
-from game_attributes import bot_info_text
+from game_attributes import bot_info_text, guest_text, owner_text
 
 from classes import User, Room
 
@@ -61,7 +61,7 @@ def process_first_name_step(message):
     text += "Игры происходят в так называемых <b>комнатах</b>. "
     text += "Комната создаётся для каждого пользователя сразу после регистрации. "
     text += "Для участия в игре пользователь может:\n"
-    text += "\t1. Открыть свою комнату и поделиться её идентификатором с коллегами.\n"
+    text += "\t1. Открыть свою комнату и поделиться её идентификатором с друзьями.\n"
     text += "\t2. Присоединиться в комнату другого пользователя по идентификатору.\n"
     text += "Для каждого пользователя я веду статистику за всё время взаимодействия, "
     text += "включающую количество игр, количество побед и общее число набранных сундучков.\n"
@@ -96,7 +96,8 @@ def getRules(message):
         text += "карты спрашиваемого номинала у соперника, после чего продолжает свой ход, "
         text += "пробуя осуществить новую кражу.\n"
         text += "Когда на руке у любого игрока оказываются 4 карты, образующие сундучок, "
-        text += "он выкладывает их перед собой лицевой стороной вверх. "
+        text += "он выкладывает их перед собой лицевой стороной вверх "
+        text += "(здесь вместо 4 карт на столе появится кружок с символом номинала). "
         text += "Теперь этот сундучок принадлежит данному игроку и проносит ему 1 балл.\n"
         text += "Когда игрок получает ход, но не имеет карт на руке, он должен взять карту из стопки. "
         text += "Если на данный момент в стопке уже нет карт, "
@@ -119,8 +120,7 @@ def chooseGame(message):
 
         text = f"Комната успешно открыта!\nИдентификатор: `{message.chat.id}`.\n"
         text += "Подожди, когда войдут твои друзья, и начинай игру.\n\n"
-        text += "Закрыть комнату /close.\n"
-        text += "Начать игру /play."
+        text += owner_text
 
         bot.send_message(message.chat.id, text, parse_mode='Markdown')
     
@@ -163,18 +163,21 @@ def add_user_to_room(message):
                 
                 room.addUser(message.chat.id)
 
-                text = f"Успешное подключение!" + room_info             # new user notification
-                text += "\nПокинуть комнату /leave."
+                text = f"Успешное подключение!" + room_info + "\n\n"    # new user notification
+                text += guest_text
 
             else:                                               # the maximum number of users in the room has been exceeded
-                text = "В данной комнате уже находится 6 человек."
+                text = "В данной комнате уже находится 6 человек.\n"
+                text += bot_info_text
             
         else:                                           # the room is closed
             text = "Эта комната в данный момент закрыта.\n"
-            text += "Попробуй зайти позже или убедись, что вводишь нужный идентификатор."
+            text += "Попробуй зайти позже или убедись, что вводишь нужный идентификатор.\n"
+            text += bot_info_text
     
     else:                                       # invalid room link
-        text = "Данной комнаты не существует.\nПроверь, что вводишь нужный идентификатор."
+        text = "Данной комнаты не существует.\nПроверь, что вводишь нужный идентификатор.\n"
+        text += bot_info_text
     
     bot.send_message(message.chat.id, text, parse_mode='html')
 
@@ -231,29 +234,48 @@ def leaveRoom(message):
     user = user_dict[message.chat.id]
     room = room_dict[user.current_room_id]
 
-    if user.current_room_id and user.current_room_id != message.chat.id and not room.players:
+    if user.current_room_id and user.current_room_id != message.chat.id:
+        
+        text = ""
+        add_owner_text = ""
+        add_guest_text = ""
+
+        if room.players:                                        # a game is running in the room with the user
+            for player_id, message_id in room.round_to_delete:          # delete the last round
+                bot.delete_message(player_id, message_id)
+            room.clearMessagesToDelete(is_round=True)
+
+            for player_id, message_id in room.message_to_delete:        # delete the last message
+                bot.delete_message(player_id, message_id)
+            room.clearMessagesToDelete()
+
+            room.finishGame()                                           # finish the game and delete the game data
+
+            text = "Игра прервана.\n"
+            add_owner_text = owner_text
+            add_guest_text = guest_text
 
         room.removeUser(message.chat.id)
 
-        text = f"<code>{user.username}</code> покидает комнату."        # owner notification
+        text += f"<code>{user.username}</code> покидает комнату."       # text of notification
         end = ""
         if room.users_count > 4:
             end = "ов"
         elif room.users_count > 1:
             end = "а"
-        middle = "ё" if room.users_count == 1 else "у"
-        text += f"\n{room.users_count} игрок" + end + " жд" + middle + "т начала."
-
-        bot.send_message(room.owner_id, text, parse_mode='html')
+        text += f"\n{room.users_count} игрок" + end + " в комнате."
+                                                                        # owner notification
+        bot.send_message(room.owner_id, text + add_owner_text, parse_mode='html')
 
         for user_id in room.user_ids:                                   # other users notifications
-            bot.send_message(user_id, text, parse_mode='html')
+            bot.send_message(user_id, text + add_guest_text, parse_mode='html')
         
-        text = "Успешный выход из комнаты.\nВозвращайся к игре в любой момент." # leaving user notification
+        text = "Успешный выход из комнаты.\n"                           # leaving user notification
+        text += "Возвращайся к игре в любой момент."
         bot.send_message(message.chat.id, text, parse_mode='html')
-    
-    else:                                                       # command denied if a room is the user's personal room
-        bot.delete_message(message.chat.id, message.message_id) # or a game is running in the room with the user
+
+    else:                                                       # command denied if user is not in a room
+        bot.delete_message(message.chat.id, message.message_id) # or the room is the user's personal room
 
 
 # Close user's personal room
@@ -261,18 +283,34 @@ def leaveRoom(message):
 def closeRoom(message):
     room = room_dict[message.chat.id]
 
-    if user_dict[message.chat.id].current_room_id == message.chat.id and not room.players:
-        text = f"Комната закрыта владельцем."                           # other users notifications
+    if user_dict[message.chat.id].current_room_id == message.chat.id:
+        
+        text = ""
+
+        if room.players:                                        # a game is running in the user's room
+            for player_id, message_id in room.round_to_delete:          # delete the last round
+                bot.delete_message(player_id, message_id)
+            room.clearMessagesToDelete(is_round=True)
+
+            for player_id, message_id in room.message_to_delete:        # delete the last message
+                bot.delete_message(player_id, message_id)
+            room.clearMessagesToDelete()
+
+            room.finishGame()                                           # finish the game and delete the game data
+
+            text = "Игра прервана.\n"
+        
+        text += "Комната закрыта владельцем."                           # other users notifications
         for user_id in room.user_ids:
             bot.send_message(user_id, text, parse_mode='html')
         
         room.closeRoom()
 
-        text = f"Комната успешно закрыта."                              # owner notification
+        text = "Комната успешно закрыта."                              # owner notification
         bot.send_message(message.chat.id, text, parse_mode='html')
     
-    else:                                                       # command denied if user is in another user's room
-        bot.delete_message(message.chat.id, message.message_id) # or a game is running in the room with the user
+    else:                                                       # command denied if user is not in a room
+        bot.delete_message(message.chat.id, message.message_id) # or the room is not the user's personal room
 
 
 # Play the game in an open room with 2 to 6 players
@@ -297,12 +335,11 @@ def playGame(message):
                     delta_left = (name_len - len(name)) // 2
                     order += '\n-> ' + name.ljust(len(name) + delta_left).rjust(name_len) + ' ->'
 
-                # order = ' ->\n-> '.join([players[player_id].name for player_id in room.queue])
                 text += f"\n\nУстановлен порядок:{order}```\n\n"
             add_text = "Владелец комнаты должен выбрать первого игрока."
 
             message_to_delete = []                      # message links about choosing the first player
-            message_id = message.message_id + room.users_count + 1
+            message_id = message.message_id + 3
             markup = types.InlineKeyboardMarkup()
 
             for player_id in players:
@@ -314,7 +351,7 @@ def playGame(message):
                 else:
                     bot.send_message(player_id, add_text, parse_mode='html')
                     message_to_delete.append((player_id, message_id))
-                    message_id += 1
+                    message_id += 2
                 
                 callback_data = "first" if len(players) > 2 else "player"
                 callback_data += str(player_id)
@@ -323,7 +360,7 @@ def playGame(message):
             
             add_text = "Выбери игрока, который будет ходить первым."        # message about choosing the first player (to the owner)
             bot.send_message(message.chat.id, add_text, parse_mode='html', reply_markup=markup)
-            message_to_delete.append((message.chat.id, message_id))
+            message_to_delete.append((message.chat.id, message_id - 1))
 
             room.addMessagesToDelete(message_to_delete)             # save messages links to delete them later
         
@@ -421,6 +458,9 @@ def response(function_call):
                 markup = types.InlineKeyboardMarkup()
 
                 for nominal in players[message.chat.id].card_dict:          # create nominal buttons
+                    if not players[message.chat.id].card_dict[nominal]:
+                        continue
+
                     callback_data = 'nominal' + nominal + answer_id_str
 
                     if nominal == "1":                                              # add missing '0' for 10
@@ -441,7 +481,6 @@ def response(function_call):
                 if room.queue[0] == ask_id:                                 # set order
                     room.setQueue(ask_id)
                 answer_id = room.queue[0]
-                # answer_id = room.queue[0] if room.queue[0] != ask_id else room.queue[1]
 
                 image = room.drawPlayerRoom(answer_id, face_id=ask_id)      # send photo to both players
                 bot.send_photo(answer_id, image)
@@ -456,6 +495,9 @@ def response(function_call):
                     markup = types.InlineKeyboardMarkup()
 
                     for nominal in players[ask_id].card_dict:                   # create nominal buttons
+                        if not players[ask_id].card_dict[nominal]:
+                            continue
+
                         callback_data = 'nominal' + nominal + str(answer_id)
 
                         if nominal == "1":                                          # add missing '0' for 10
@@ -520,7 +562,7 @@ def response(function_call):
             
             markup = types.InlineKeyboardMarkup()
 
-            if ask_nominal in players[answer_id].card_dict:             # check if the answering player has the chosen nominal
+            if players[answer_id].card_dict[ask_nominal]:               # check if the answering player has the chosen nominal
                 callback_data = "yesnominal" + ask_nominal + str(message.chat.id)       # create a positive response button
                 button = types.InlineKeyboardButton(text="Да", callback_data=callback_data)
             
@@ -729,8 +771,6 @@ def response(function_call):
                     button_text = "Завершить игру"                           # because there is no other players except the answering player
                     callback_data = "endgame"
 
-            # print("Yes:", ask_nominal, room.cards_count, callback_data)
-
             button = types.InlineKeyboardButton(text=button_text, callback_data=callback_data)
             markup.add(button)
             image = room.drawPlayerRoom(ask_id, smile_id=ask_id, rage_id=message.chat.id, ask_nums=ask_nums)
@@ -780,7 +820,8 @@ def response(function_call):
                 room.takeCards(ask_id, is_stack=True)
                 if room.cards_count > 0:                                        # pass the turn to the next player
                     button_text = "Взять карту и передать ход"                      # because there are cards not in chests
-                    callback_data = "next" if len(players) > 2 else "player" + str(next_id)
+                    callback_data = "next" if len(players) > 2 else "player"
+                    callback_data += str(next_id)
                 else:                                                           # finish the game
                     button_text = "Завершить игру"
                     callback_data = "endgame"
@@ -789,9 +830,8 @@ def response(function_call):
                 while not players[next_id].num_list:
                     next_id = room.updateQueue()                                # get the first next player with cards in hand
                 button_text = "Передать ход"
-                callback_data = "next" if len(players) > 2 else "player" + str(next_id) # to choose the answering player (3 or more players)
-                                                                                        # to choose nominal (2 players)
-            # print("No Stack", room.cards_count, callback_data)
+                callback_data = "next" if len(players) > 2 else "player"        # to choose the answering player (3 or more players)
+                callback_data += str(next_id)                                       # to choose nominal (2 players)
 
             button = types.InlineKeyboardButton(text=button_text, callback_data=callback_data)
             markup.add(button)                                          # send the answer with button to the asking player
@@ -868,7 +908,7 @@ def response(function_call):
                 markup.add(button)
                 bot.send_message(ask_id, text, parse_mode='html', reply_markup=markup)
 
-                message_to_delete.append((ask_id, message_id))                      # save message links to delete in the next step
+                message_to_delete.append((ask_id, message_id + 1))                  # save message links to delete in the next step
                 room.addMessagesToDelete(message_to_delete, is_round=True)          # the whole round will be deleted at once
         
         # write the game results and statistics ofthe users
@@ -897,7 +937,7 @@ def response(function_call):
             text += 'ь' if len(winners) == 1 else 'и'
             text += "*: " + ', '.join(winners) + ".\n\n```\n"
 
-            line = '-' * (name_len + 35) + '\n'                             # horizontal line of the result table
+            line = '-' * (name_len + 35) + '\n'                                 # horizontal line of the result table
 
             text += line                                                        # names of the result table columns
             text += '|' + "Имя".ljust(name_len + 2) + '|' + "Игры".ljust(6) + '|' + "Победы".ljust(9) + '|' + "Сундучки".ljust(13) + '|\n'
@@ -913,12 +953,23 @@ def response(function_call):
             
             text += line                                                        # result table end
             text += "```"
+                                                                        # additional guest text
+            add_text = "Можешь остаться в комнате, если хочешь сыграть ещё раз в той же компании.\n\n"
+            add_text += guest_text
 
             for player_id in players:                                   # send final messages
                 image = room.drawPlayerRoom(player_id)
-                bot.send_photo(player_id, image)                                # final image 
+                bot.send_photo(player_id, image)                                # final image
                 bot.send_message(player_id, text, parse_mode='Markdown')        # game results
-            
+
+                if player_id != room.owner_id:                                  # remind the command to leave the room
+                    bot.send_message(player_id, add_text, parse_mode='html')
+                                                                        # additional owner text
+            add_text = "Можешь остаться в своей комнате, если хочешь провести ещё одну игру в той же компании.\n\n"
+            add_text += owner_text
+                                                                        # remind commands for the owner
+            bot.send_message(room.owner_id, add_text, parse_mode='html')
+
             room.finishGame()                                           # finish the game and delete the game data
 
 

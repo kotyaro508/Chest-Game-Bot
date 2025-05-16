@@ -50,6 +50,7 @@ class Room:
         self.queue = []                     # game order
         self.deck = list(range(52))
         self.stack = []                     # rest of the deck lying in the center of the table
+        self.stack_size = 0
         self.cards_count = 0                # number of cards not in chests (stack and players hands)
         self.first_names_dict = {}
         self.image = None
@@ -92,6 +93,7 @@ class Room:
         
         shuffle(self.deck)                                      # prepare cards for the game
         self.stack = self.deck.copy()
+        self.stack_size = 52 - 4 * self.users_count
 
         for first_name in self.first_names_dict:                # set names for players
             if len(self.first_names_dict[first_name]) == 1:             # name is first name for players with unique first names
@@ -124,9 +126,9 @@ class Room:
         num_list = []                                           # take initial cards in hand
         for _ in range(4):
             num_list.append(self.stack.pop())
-        nominal_id = self.players[player_id].takeCards(num_list)
+        nominal = self.players[player_id].takeCards(num_list)
 
-        self.throwChest(player_id, nominal_id)
+        self.throwChest(player_id, nominal)
     
 
     def setQueue(self, first_player_id):
@@ -154,18 +156,18 @@ class Room:
 
     
     def takeCards(self, player_id, is_stack=False, nums=None):
-        nominal_id = None
+        nominal = None
         if is_stack:
-            nominal_id = self.players[player_id].takeCards([self.stack.pop()])
+            nominal = self.players[player_id].takeCards([self.stack.pop()])
         else:
-            nominal_id = self.players[player_id].takeCards(nums)
-        self.throwChest(player_id, nominal_id)
+            nominal = self.players[player_id].takeCards(nums)
+        self.throwChest(player_id, nominal)
     
 
-    def throwChest(self, player_id, nominal_id):
-        if nominal_id is not None:                              # throw cards on the table if there is a chest
+    def throwChest(self, player_id, nominal):
+        if nominal is not None:                              # throw cards on the table if there is a chest
             self.cards_count -= 4
-            self.drawChest(player_id, self.players[player_id].chest_count, nominal_id)
+            self.drawChest(player_id, self.players[player_id].chest_count, nominal)
 
 
     def updateQueue(self):
@@ -174,22 +176,19 @@ class Room:
         return player_id
     
 
-    def drawChest(self, front_id, chest_num, nominal_id):
+    def drawChest(self, front_id, chest_num, nominal):
         tmp = self.queue.index(front_id)                        # set order to draw the table
         order = self.queue[tmp:] + self.queue[:tmp]
 
-        R = 300
+        color = 'r' if self.cards_count % 8 else 'b'
+        R = 280 if chest_num % 2 else 240
+        alpha_0 = 5 * (chest_num - 6)
 
-        nums = list(range(4 * nominal_id, 4 * nominal_id + 4))  # set random order of chest cards
-        shuffle(nums)
-
-        for i, player_id in enumerate(order):                   # draw chest in front of chest owner for each player
-            for k, num in enumerate(nums):
-                alpha = 5 * (chest_num - 4)
-                alpha -= i * 360 // self.users_count                    # i defines the owner's angle
-                alpha -= (k - 1) / 2                                    # k defines the small shift angle for each card in chest
-                path = 'Img/Small/' + str(num) + '.png'
-                self.players[player_id].drawChestCard(path, alpha, R)
+        for i, player_id in enumerate(order):                   # draw chest chip in front of chest owner for each player
+            alpha = alpha_0
+            alpha -= i * 360 // self.users_count                    # i defines the owner's angle
+            path = 'Img/Chips/' + nominal + color + '.png'
+            self.players[player_id].drawChestChip(path, alpha, R)
 
 
     def drawPlayerRoom(self, front_id, face_id=None, smile_id=None, rage_id=None, ask_nums=[]):
@@ -210,13 +209,6 @@ class Room:
 
         tmp = self.queue.index(front_id)                        # set order to draw the table
         order = self.queue[tmp + 1:] + self.queue[:tmp]         # the front player will be added later (to draw emoji)
-
-        R, r = 720, 320                                         # draw the front player's hand
-        nums = self.players[front_id].num_list
-        for j, num in enumerate(nums):
-            beta = 2 * (len(nums) - 1 - 2 * j)
-            path = 'Img/Cards/' + str(num) + '.png'
-            self.drawCard(path, 0, beta, R, r)
         
         R, r = 720, 270                                         # draw opponents hands
         path = 'Img/back.png'
@@ -233,6 +225,14 @@ class Room:
             alpha = -(i + 1) * 360 // self.users_count
             alpha += delta_alpha
             self.drawName(player_id, alpha, R)
+
+        R, r = 1800, 1250                                       # draw the front player's hand
+        nums = self.players[front_id].num_list
+        for j, num in enumerate(nums):
+            # beta = len(nums) - 1 - 2 * j
+            beta = len(nums) - 5 - 2 * j
+            path = 'Img/Cards/' + str(num) + '.png'
+            self.drawCard(path, 0, beta, R, r)
         
         R = 450                                                 # draw emoji
         order = [front_id] + order
@@ -246,7 +246,7 @@ class Room:
             alpha = -order.index(rage_id) * 360 // self.users_count
             self.drawEmoji("Img/rage.png", alpha, R)
         
-        for i, num in enumerate(ask_nums):                    # draw transferred cards
+        for i, num in enumerate(ask_nums):                      # draw transferred cards
             R = 100 * abs(2 * i + 1 - len(ask_nums))
             alpha = -90 * ((4 - len(ask_nums)) * i + 1)
             path = 'Img/Cards/' + str(num) + '.png'
@@ -266,15 +266,15 @@ class Room:
             `R` - radius from the room center
             `r` - radius of a player's hand
         '''
+        angle = alpha + beta                                    # total angle of a card rotation
+
         card = Image.open(path)                                 # card loading and rotation
         width, height = card.size
         card = card.rotate(angle, expand=1)
-
-        angle = alpha + beta                                    # total angle of a card rotation
         
         mask_card = Image.new("L", (width, height), 0)          # mask creation and rotation
         draw = ImageDraw.Draw(mask_card)
-        draw.rounded_rectangle((0, 0, width, height), radius=(width / 10 - 1), fill=255)
+        draw.rounded_rectangle((0, 0, width, height), radius=int(width / 12), fill=255)
         mask_card = mask_card.rotate(angle, expand=1)
 
         alpha = alpha / 180 * np.pi
@@ -298,7 +298,7 @@ class Room:
         n_cards = len(self.stack)
         path = 'Img/back.png'
         for i in range(n_cards):                                # card stack is rotated to show number of cards
-            alpha = 180 * (i + 1) // n_cards
+            alpha = 180 * (i + 1) // self.stack_size
             self.drawCard(path, alpha, 0, 0, 0)
     
 
@@ -365,6 +365,7 @@ class Room:
         self.players.clear()
         self.queue.clear()
         self.cards_count = 0
+        self.stack_size = 0
 
 
 # Object of Player class is created immediately after the game starts
@@ -373,7 +374,8 @@ class Player:
         self.username = username
         self.name = None
         self.num_list = []                  # list of card numbers (used to sort cards in player's hand and get links to files)
-        self.card_dict = {}                 # dict of card names (used for asking questions and checking cards in another player's hand)
+                                            # dict of card names (used for asking questions and checking cards in another player's hand)
+        self.card_dict = {n: [] for n in nominals}
         self.chest_count = 0
         self.image = Image.open('Img/room.png') # empty round
     
@@ -384,10 +386,11 @@ class Player:
 
     def removeNominal(self, nominal):
         nums = []                                               # give cards to another player
-        for card in self.card_dict.pop(nominal):
+        for card in self.card_dict[nominal]:
             num = card_to_num[card]
             self.num_list.remove(num)
             nums.append(num)
+        self.card_dict[nominal].clear()
         return nums
 
 
@@ -397,31 +400,28 @@ class Player:
 
         for num in nums:
             nominal = nominals[num // 4]
-            if nominal not in self.card_dict:
-                self.card_dict[nominal] = []
             self.card_dict[nominal].append(num_to_card[num])
 
             if len(self.card_dict[nominal]) == 4:               # throw a chest if the player gets one in his hand
                 _ = self.removeNominal(nominal)
                 self.chest_count += 1
-                return nominals.index(nominal)
+                return nominal
         return None
     
 
-    def drawChestCard(self, path, alpha, R):
+    def drawChestChip(self, path, alpha, R):
         '''
             `path` - link to the card file
-            `alpha` - player's angle
+            `alpha` - chip's angle
             `R` - radius from the room center
         '''
-        card = Image.open(path)                                 # card loading and rotation
-        width, height = card.size
-        card = card.rotate(alpha, expand=1)
+        chip = Image.open(path)                                 # chip loading
+        width, height = chip.size
+        # chip = chip.rotate(alpha, expand=1)
 
-        mask_card = Image.new("L", (width, height), 0)          # mask creation and rotation
-        draw = ImageDraw.Draw(mask_card)
-        draw.rounded_rectangle((0, 0, width, height), radius=(width / 10 - 1), fill=255)
-        mask_card = mask_card.rotate(alpha, expand=1)
+        mask_chip = Image.new("L", (width, height), 0)          # mask creation
+        draw = ImageDraw.Draw(mask_chip)
+        draw.ellipse((0, 0, width - 1, height - 1), fill='white')
 
         alpha = alpha / 180 * np.pi
 
@@ -429,9 +429,9 @@ class Player:
         pos_y = self.image.size[1] / 2
         pos_x += R * np.sin(alpha)                                      # place before the player's hand
         pos_y += R * np.cos(alpha)
-        pos_x -= (width * np.abs(np.cos(alpha)) + height * np.abs(np.sin(alpha))) / 2   # correction for card size and rotation
-        pos_y -= (width * np.abs(np.sin(alpha)) + height * np.abs(np.cos(alpha))) / 2
+        pos_x -= width / 2                                              # correction for chip size
+        pos_y -= height / 2
         pos_x = np.round(pos_x).astype('int')
         pos_y = np.round(pos_y).astype('int')
 
-        self.image.paste(card, (pos_x, pos_y), mask_card)
+        self.image.paste(chip, (pos_x, pos_y), mask_chip)

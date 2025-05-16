@@ -90,8 +90,8 @@ def attributes_init():
             suit_to_endname[nominal] = "ая"
 
 
-    # Text used after /start command
-    global bot_info_text
+    # Text used for commands
+    global bot_info_text, guest_text, owner_text
 
     bot_info_text = "\nОткрыть правила игры /rules.\n"
     bot_info_text += "Открыть свою комнату /open.\n"
@@ -99,6 +99,10 @@ def attributes_init():
     bot_info_text += "Посмотреть имя и статистику /personal.\n"
     bot_info_text += "Изменить имя и фамилию /rename."
 
+    guest_text = "Покинуть комнату /leave."
+
+    owner_text = "Закрыть комнату /close."
+    owner_text += "\nНачать игру /play."
 
     # Dicts for users and rooms is used continuously
     global user_dict, room_dict
